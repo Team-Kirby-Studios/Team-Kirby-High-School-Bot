@@ -28,18 +28,49 @@ async def help_command(interaction: discord.Interaction):
     em.add_field(name="Comandi", value="tiropa, passaggio, dribbling, contrasto, tiro, fallo, estrazione")
     await interaction.response.send_message(embed=em, ephemeral=True)
 
-# Funzione per creare un comando randomico
-def create_random_command(name, description, responses):
+# Funzione per creare un comando con target utente e messaggi personalizzati
+def create_targeted_command(name, description, responses, message_template):
     @tree.command(name=name, description=description)
-    async def random_command(interaction: discord.Interaction):
-        await interaction.response.send_message(f"{random.choice(responses)}")
+    async def command(interaction: discord.Interaction, utente: discord.Member):
+        result = random.choice(responses)
+        message = message_template.format(utente=utente.mention, user=interaction.user.mention, result=result)
+        await interaction.response.send_message(message)
 
-# Creazione dei comandi sportivi
-create_random_command("tiropa", "Tira in Palla Avvelenata!", ['Colpito', 'Bloccata', 'Bersaglio Mancato'])
-create_random_command("passaggio", "Passa la palla a un compagno!", ['Palla passata', 'Passaggio intercettato'])
-create_random_command("dribbling", "Prova a dribblare un avversario!", ['Avversario superato', 'Dribbling non riuscito', 'Fallo subito', 'Fallo commesso'])
-create_random_command("contrasto", "Prova a contrastare un avversario!", ['Contrasto riuscito', 'Contrasto non riuscito', 'Fallo commesso', 'Fallo subito'])
-create_random_command("tiro", "Prova a tirare in porta!", ['Gol', 'Parata', 'Palo/Traversa', 'Tiro fuori'])
+# Creazione dei comandi con menzione utente
+create_targeted_command(
+    "tiropa", 
+    "Tira in Palla Avvelenata!", 
+    ['Colpito', 'Bloccata', 'Bersaglio Mancato'],
+    "🏐 {user} ha lanciato la palla contro {utente}: **{result}!**"
+)
+
+create_targeted_command(
+    "passaggio", 
+    "Passa la palla a un compagno!", 
+    ['Palla passata', 'Passaggio intercettato'],
+    "👟 {user} prova a passare la palla a {utente}: **{result}!**"
+)
+
+create_targeted_command(
+    "dribbling", 
+    "Prova a dribblare un avversario!", 
+    ['Avversario superato', 'Dribbling non riuscito', 'Fallo subito', 'Fallo commesso'],
+    "⚡ {user} tenta un dribbling contro {utente}: **{result}!**"
+)
+
+create_targeted_command(
+    "contrasto", 
+    "Prova a contrastare un avversario!", 
+    ['Contrasto riuscito', 'Contrasto non riuscito', 'Fallo commesso', 'Fallo subito'],
+    "🛡️ {user} prova a contrastare {utente}: **{result}!**"
+)
+
+# Comando tiro SENZA menzione di un avversario
+@tree.command(name="tiro", description="Prova a tirare in porta!")
+async def tiro(interaction: discord.Interaction):
+    tiro_responses = ['Gol', 'Parata', 'Palo/Traversa', 'Tiro fuori']
+    result = random.choice(tiro_responses)
+    await interaction.response.send_message(f"⚽ {interaction.user.mention} ha tirato in porta: **{result}!**")
 
 # Comando fallo con restrizione di ruolo
 @tree.command(name="fallo", description="Decidi se un fallo è da cartellino. Solo per Roleplay Staff.")
