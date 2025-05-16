@@ -5,12 +5,10 @@ import json
 from discord.ext import commands, tasks
 from discord import app_commands
 
-# Intents e bot setup
 intents = discord.Intents.default()
 bot = discord.Client(intents=intents)
 tree = discord.app_commands.CommandTree(bot)
 
-# File per salvare le abilità
 SKILLS_FILE = "skills.json"
 
 initial_skills = {
@@ -18,10 +16,10 @@ initial_skills = {
     "passaggio": 50,
     "dribbling": 50,
     "contrasto": 50,
-    "tiro": 50
+    "tiro": 50,
+    "portiere": 50
 }
 
-# Caricamento da file
 if os.path.exists(SKILLS_FILE):
     with open(SKILLS_FILE, "r") as f:
         try:
@@ -32,6 +30,11 @@ if os.path.exists(SKILLS_FILE):
 else:
     user_skills = {}
 
+for user_id, skills in user_skills.items():
+    for abilita, valore in initial_skills.items():
+        if abilita not in skills:
+            skills[abilita] = valore
+
 def save_skills():
     with open(SKILLS_FILE, "w") as f:
         json.dump(user_skills, f)
@@ -39,6 +42,10 @@ def save_skills():
 def get_user_skills(user_id):
     if user_id not in user_skills:
         user_skills[user_id] = initial_skills.copy()
+    else:
+        for abilita, valore in initial_skills.items():
+            if abilita not in user_skills[user_id]:
+                user_skills[user_id][abilita] = valore
     return user_skills[user_id]
 
 def weighted_choice(skill_level, success_results, fail_results):
@@ -71,7 +78,8 @@ async def help_command(interaction: discord.Interaction):
     app_commands.Choice(name="Passaggio", value="passaggio"),
     app_commands.Choice(name="Dribbling", value="dribbling"),
     app_commands.Choice(name="Contrasto", value="contrasto"),
-    app_commands.Choice(name="Tiro", value="tiro")
+    app_commands.Choice(name="Tiro", value="tiro"),
+    app_commands.Choice(name="Portiere", value="portiere")
 ])
 async def allenamento(interaction: discord.Interaction, abilita: app_commands.Choice[str]):
     skills = get_user_skills(interaction.user.id)
@@ -93,7 +101,8 @@ async def abilita(interaction: discord.Interaction):
     app_commands.Choice(name="Passaggio", value="passaggio"),
     app_commands.Choice(name="Dribbling", value="dribbling"),
     app_commands.Choice(name="Contrasto", value="contrasto"),
-    app_commands.Choice(name="Tiro", value="tiro")
+    app_commands.Choice(name="Tiro", value="tiro"),
+    app_commands.Choice(name="Portiere", value="portiere")
 ])
 async def imposta_abilita(interaction: discord.Interaction, utente: discord.Member, abilita: app_commands.Choice[str], valore: int):
     is_admin = interaction.user.guild_permissions.administrator
@@ -108,9 +117,39 @@ async def imposta_abilita(interaction: discord.Interaction, utente: discord.Memb
 
 @tree.command(name="tiropa", description="Tira in Palla Avvelenata!")
 async def tiropa(interaction: discord.Interaction, utente: discord.Member):
-    skills = get_user_skills(interaction.user.id)
-    result = weighted_choice(skills["tiropa"], ['Colpito'] * 2, ['Bloccata', 'Bersaglio Mancato'])
-    await interaction.response.send_message(f"🏐 {interaction.user.mention} ha lanciato la palla contro {utente.mention}: **{result}!**")
+    skills_attaccante = get_user_skills(interaction.user.id)
+    skills_difensore = get_user_skills(utente.id)
+
+    att_stat = max(min(skills_attaccante["tiropa"], 100), 50)
+    def_stat = max(min(skills_difensore["tiropa"], 100), 50)
+
+    scaling = (att_stat - def_stat) / 50  # varia da -1 a +1
+
+    colpito_chance = 0.5 + scaling * 0.2  # da 0.3 a 0.7
+    bloccata_chance = 0.35 - scaling * 0.2  # da 0.15 a 0.55
+
+    colpito_chance = max(0.3, min(colpito_chance, 0.7))
+    bloccata_chance = max(0.15, min(bloccata_chance, 0.55))
+
+    mancato_bonus = (100 - att_stat) / 100 * 0.1  # da 0 a 0.05
+    mancato_chance = max(0.05, 1.0 - (colpito_chance + bloccata_chance) + mancato_bonus)
+
+    total = colpito_chance + bloccata_chance + mancato_chance
+    colpito_chance /= total
+    bloccata_chance /= total
+    mancato_chance /= total
+
+    # Costruzione lista risultati
+    risultati = (
+    ["Colpito"] * int(colpito_chance * 100) +
+    ["Bloccata"] * int(bloccata_chance * 100) +
+    ["Schivata/Bersaglio Mancato"] * int(mancato_chance * 100)
+    )
+
+    risultato = random.choice(risultati)
+    await interaction.response.send_message(
+        f"🏐 {interaction.user.mention} ha lanciato la palla contro {utente.mention}: **{risultato}!**"
+    )
 
 @tree.command(name="passaggio", description="Passa la palla a un compagno!")
 async def passaggio(interaction: discord.Interaction, utente: discord.Member):
@@ -131,10 +170,40 @@ async def contrasto(interaction: discord.Interaction, utente: discord.Member):
     await interaction.response.send_message(f"🛡️ {interaction.user.mention} prova a contrastare {utente.mention}: **{result}!**")
 
 @tree.command(name="tiro", description="Prova a tirare in porta!")
-async def tiro(interaction: discord.Interaction):
-    skills = get_user_skills(interaction.user.id)
-    result = weighted_choice(skills["tiro"], ['Gol'] * 4, ['Parata', 'Palo/Traversa', 'Tiro fuori'])
-    await interaction.response.send_message(f"⚽ {interaction.user.mention} ha tirato in porta: **{result}!**")
+async def tiro(interaction: discord.Interaction, utente: discord.Member):
+    skills_att = get_user_skills(interaction.user.id)
+    skills_por = get_user_skills(utente.id)
+    
+    stat_att = max(min(skills_att["tiro"], 100), 50)
+    stat_por = max(min(skills_por["portiere"], 100), 50)
+    palo_chance = 0.05
+    
+    scaling = (stat_att - stat_por) / 50  # Normalizzato tra -1 e +1
+
+    # Probabilità con limiti aggiornati
+    gol_chance = min(0.75, max(0.35, 0.55 + scaling * 0.2))
+    parata_chance = min(0.55, max(0.15, 0.35 - scaling * 0.2))
+
+    errore_bonus = (100 - stat_att) / 100 * 0.25
+
+    fuori_chance = min(0.3, max(0.05, errore_bonus))
+
+    totale = gol_chance + parata_chance + fuori_chance + palo_chance
+    if totale > 1:
+        scale = 1 / totale
+        gol_chance *= scale
+        parata_chance *= scale
+        fuori_chance *= scale
+        palo_chance *= scale
+
+    eventi = ["Gol", "Parata", "Tiro Fuori", "Palo/Traversa"]
+    pesi = [gol_chance, parata_chance, fuori_chance, palo_chance]
+
+    result = random.choices(eventi, weights=pesi, k=1)[0]
+
+    await interaction.response.send_message(
+        f"⚽ {interaction.user.mention} ha tirato in porta: **{result}!**"
+    )
 
 @tree.command(name="fallo", description="Decidi se un fallo è da cartellino. Solo per Roleplay Staff.")
 async def fallo(interaction: discord.Interaction):
