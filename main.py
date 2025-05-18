@@ -139,7 +139,6 @@ async def tiropa(interaction: discord.Interaction, utente: discord.Member):
     bloccata_chance /= total
     mancato_chance /= total
 
-    # Costruzione lista risultati
     risultati = (
     ["Colpito"] * int(colpito_chance * 100) +
     ["Bloccata"] * int(bloccata_chance * 100) +
@@ -159,14 +158,60 @@ async def passaggio(interaction: discord.Interaction, utente: discord.Member):
 
 @tree.command(name="dribbling", description="Prova a dribblare un avversario!")
 async def dribbling(interaction: discord.Interaction, utente: discord.Member):
-    skills = get_user_skills(interaction.user.id)
-    result = weighted_choice(skills["dribbling"], ['Avversario superato'] * 3, ['Dribbling non riuscito', 'Fallo subito', 'Fallo commesso'])
+    skill_att = get_user_skills(interaction.user.id)
+    skill_def = get_user_skills(utente.id)
+    
+    stats_att = max(min(skill_att["dribbling"], 100), 50)
+    stats_def = max(min(skill_def["contrasto"], 100), 50)
+    
+    scaling = (stats_att - stats_def) / 50
+    
+    superato_chance = min(0.75, max(0.15, 0.4 + scaling * 0.35))
+    nonsuperato_chance = min(0.7, max(0.10, 0.5 - scaling * 0.35))
+    subito_chance = min(0.25, max(0.05, 0.05 + scaling * 0.2))
+    commesso_chance = min(0.05, max(0.01, 0.01 - scaling * 0.05))
+    
+    totale = superato_chance + nonsuperato_chance + subito_chance + commesso_chance
+    if totale > 1:
+        scale = 1 / totale
+        superato_chance *= scale
+        nonsuperato_chance *= scale
+        subito_chance *= scale
+        commesso_chance *= scale
+        
+    eventi = ["Avversario superato", "Dribbling non riuscito", "Fallo subito", "Fallo commesso"]
+    pesi = [superato_chance, nonsuperato_chance, subito_chance, commesso_chance]
+    
+    result = random.choices(eventi, weights=pesi, k=1)[0]
     await interaction.response.send_message(f"⚡ {interaction.user.mention} tenta un dribbling contro {utente.mention}: **{result}!**")
 
 @tree.command(name="contrasto", description="Prova a contrastare un avversario!")
 async def contrasto(interaction: discord.Interaction, utente: discord.Member):
-    skills = get_user_skills(interaction.user.id)
-    result = weighted_choice(skills["contrasto"], ['Contrasto riuscito'] * 3, ['Contrasto non riuscito', 'Fallo subito', 'Fallo commesso'])
+    skill_def = get_user_skills(interaction.user.id)
+    skill_att = get_user_skills(utente.id)
+    
+    stats_att = max(min(skill_att["dribbling"], 100), 50)
+    stats_def = max(min(skill_def["contrasto"], 100), 50)
+    
+    scaling = (stats_def - stats_att) / 50
+    
+    riuscito_chance = min(0.75, max(0.15, 0.4 + scaling * 0.35))
+    nonriuscito_chance = min(0.6, max(0.10, 0.45 - scaling * 0.35))
+    subito_chance = min(0.05, max(0.01, 0.01 + scaling * 0.05))
+    commesso_chance = min(0.2, max(0.05, 0.1 - scaling * 0.1))
+    
+    totale = riuscito_chance + nonriuscito_chance + subito_chance + commesso_chance
+    if totale > 1:
+        scale = 1 / totale
+        riuscito_chance *= scale
+        nonriuscito_chance *= scale
+        subito_chance *= scale
+        commesso_chance *= scale
+        
+    eventi = ["Contrasto riuscito", "Contrasto non riuscito", "Fallo subito", "Fallo commesso"]
+    pesi = [riuscito_chance, nonriuscito_chance, subito_chance, commesso_chance]
+    
+    result = random.choices(eventi, weights=pesi, k=1)[0]
     await interaction.response.send_message(f"🛡️ {interaction.user.mention} prova a contrastare {utente.mention}: **{result}!**")
 
 @tree.command(name="tiro", description="Prova a tirare in porta!")
@@ -178,9 +223,8 @@ async def tiro(interaction: discord.Interaction, utente: discord.Member):
     stat_por = max(min(skills_por["portiere"], 100), 50)
     palo_chance = 0.05
     
-    scaling = (stat_att - stat_por) / 50  # Normalizzato tra -1 e +1
+    scaling = (stat_att - stat_por) / 50
 
-    # Probabilità con limiti aggiornati
     gol_chance = min(0.75, max(0.35, 0.55 + scaling * 0.2))
     parata_chance = min(0.55, max(0.15, 0.35 - scaling * 0.2))
 
@@ -202,7 +246,7 @@ async def tiro(interaction: discord.Interaction, utente: discord.Member):
     result = random.choices(eventi, weights=pesi, k=1)[0]
 
     await interaction.response.send_message(
-        f"⚽ {interaction.user.mention} ha tirato in porta: **{result}!**"
+        f"⚽ {interaction.user.mention} ha tirato in porta: **{result}!** (Portiere: {utente.mention})"
     )
 
 @tree.command(name="fallo", description="Decidi se un fallo è da cartellino. Solo per Roleplay Staff.")
@@ -219,5 +263,5 @@ async def fallo(interaction: discord.Interaction):
 async def on_ready():
     await tree.sync()
     print(f"✅ Bot connesso come {bot.user}")
-
+    
 bot.run(os.getenv("BotToken"))
