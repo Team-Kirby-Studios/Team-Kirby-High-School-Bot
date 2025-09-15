@@ -14,7 +14,7 @@ Il bot helper della Team Kirby High School!
 - Lettura voti per gli studenti, genitori e prof
 - Creazione e inserimento voti nelle pagelle
 - Visualizzazione delle pagelle per studenti e genitori
-- Sistema di voice calls con sistema di riconoscimento di Tupperbox™
+- Sistema di voice calls con sistema di riconoscimento di [Tupperbox™](https://tupperbox.app/)
 
 ## Palla Avvelenata:
 Il gioco di palla avvelanata è molto semplice e intuitivo: /tiropa per tirare contro una persona. L'esito dipende dalla skill 'tiropa' del tiratore e del difendente.
