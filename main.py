@@ -63,6 +63,11 @@ MAPPA_CLASSE_URL = "https://media.discordapp.net/attachments/1338584360500330608
 # Configurazione Voice Call
 VC_FILE = "vc_attive.json"
 PREFIX_ESCLUDI_VC = "!"
+VIVAVOCE_FILE = "vc_attive.json"
+
+# Dizionario per tenere traccia dei vivavoce attivi in memoria
+# Formato: {vc_id: {channel_id: listener_user_id}}
+VIVAVOCE_ATTIVI = {}
 
 # Sostituisci con gli ID reali del tuo server
 VC_CANALI_ESCLUSI = {
@@ -382,6 +387,110 @@ class VCAcceptView(discord.ui.View):
         # Conferma visibile solo all'utente
         await interaction.followup.send("❌ Hai rifiutato la chiamata.", ephemeral=True)
 
+# --- FUNZIONI DI UTILITÀ PER VIVAVOCE ---
+def load_vivavoce():
+    """Carica le configurazioni dei vivavoce dal file."""
+    global VIVAVOCE_ATTIVI
+    if os.path.exists(VIVAVOCE_FILE):
+        try:
+            with open(VIVAVOCE_FILE, "r", encoding="utf-8") as f:
+                # Il file salva {vc_id: {channel_id: user_id}}
+                # Ma in memoria vogliamo lo stesso per velocità
+                data = json.load(f)
+                VIVAVOCE_ATTIVI = data
+        except (json.JSONDecodeError, KeyError):
+            VIVAVOCE_ATTIVI = {}
+
+def save_vivavoce():
+    """Salva le configurazioni dei vivavoce su file."""
+    with open(VIVAVOCE_FILE, "w", encoding="utf-8") as f:
+        json.dump(VIVAVOCE_ATTIVI, f, indent=2, ensure_ascii=False)
+
+def get_vivavoce_channels_for_vc(vc_id):
+    """Ottiene i canali in vivavoce per una specifica VC."""
+    return VIVAVOCE_ATTIVI.get(vc_id, {})
+
+def set_vivavoce_channel(vc_id, channel_id, user_id):
+    """Imposta un canale come 'in vivavoce' per un utente in una VC."""
+    if vc_id not in VIVAVOCE_ATTIVI:
+        VIVAVOCE_ATTIVI[vc_id] = {}
+    VIVAVOCE_ATTIVI[vc_id][str(channel_id)] = str(user_id)
+    save_vivavoce()
+
+def remove_vivavoce_channel(vc_id, channel_id):
+    """Rimuove un canale dalla lista dei vivavoce per una VC."""
+    if vc_id in VIVAVOCE_ATTIVI and str(channel_id) in VIVAVOCE_ATTIVI[vc_id]:
+        del VIVAVOCE_ATTIVI[vc_id][str(channel_id)]
+        # Se la VC non ha più canali in vivavoce, rimuovila
+        if not VIVAVOCE_ATTIVI[vc_id]:
+            del VIVAVOCE_ATTIVI[vc_id]
+        save_vivavoce()
+
+def is_channel_in_vivavoce(channel_id):
+    """Controlla se un canale è attivo in qualche vivavoce."""
+    str_channel_id = str(channel_id)
+    for vc_channels in VIVAVOCE_ATTIVI.values():
+        if str_channel_id in vc_channels:
+            return True
+    return False
+
+def get_vc_and_listener_for_channel(channel_id):
+    """Ottiene la VC e l'utente ascoltatore per un canale in vivavoce."""
+    str_channel_id = str(channel_id)
+    for vc_id, channels in VIVAVOCE_ATTIVI.items():
+        if str_channel_id in channels:
+            return vc_id, channels[str_channel_id]
+    return None, None
+    
+    
+# --- FUNZIONI DI UTILITÀ PER VIVAVOCE ---
+def get_vc_info_and_listener_for_channel(channel_id: int | str):
+    """
+    Cerca se un canale è in vivavoce per qualche VC attiva.
+    Restituisce (vc_info, listener_user_id) se trovato, altrimenti (None, None).
+    """
+    vc_data = load_vc()
+    str_channel_id = str(channel_id)
+    
+    for vc_id, vc_info in vc_data.items():
+        if vc_info.get("stato") == "attiva":
+            vivavoce_channels = vc_info.get("vivavoce_channels", {})
+            listener_user_id = vivavoce_channels.get(str_channel_id)
+            # Verifica che l'ascoltatore sia ancora nella VC
+            if listener_user_id and listener_user_id in vc_info.get("partecipanti", []):
+                return vc_info, listener_user_id
+    return None, None
+
+def set_vivavoce_channel_in_vc_data(vc_id: str, channel_id: str, user_id: str):
+    """Imposta un canale come 'in vivavoce' per un utente in una VC, salvando su vc_attive.json."""
+    vc_data = load_vc()
+    if vc_id in vc_data:
+        if "vivavoce_channels" not in vc_data[vc_id]:
+            vc_data[vc_id]["vivavoce_channels"] = {}
+        vc_data[vc_id]["vivavoce_channels"][channel_id] = user_id
+        save_vc(vc_data)
+        return True
+    return False
+
+def remove_vivavoce_channel_from_vc_data(vc_id: str, channel_id: str):
+    """Rimuove un canale dalla lista dei vivavoce per una VC, salvando su vc_attive.json."""
+    vc_data = load_vc()
+    if vc_id in vc_data:
+        vivavoce_channels = vc_data[vc_id].get("vivavoce_channels", {})
+        if channel_id in vivavoce_channels:
+            del vivavoce_channels[channel_id]
+            # Se non ci sono più canali, rimuovi la chiave
+            if not vivavoce_channels:
+                vc_data[vc_id].pop("vivavoce_channels", None)
+            else:
+                vc_data[vc_id]["vivavoce_channels"] = vivavoce_channels
+            save_vc(vc_data)
+            return True
+    return False
+    
+    
+
+# ----------- COMANDI ------------
 
 @tree.command(name="estrazione", description="Estrai un numero casuale specificando l'intervallo")
 async def estrazione(interaction: discord.Interaction, minimo: int, massimo: int):
@@ -453,15 +562,15 @@ async def tiropa(interaction: discord.Interaction, utente: discord.Member):
     att_stat = max(min(skills_attaccante["tiropa"], 100), 50)
     def_stat = max(min(skills_difensore["tiropa"], 100), 50)
 
-    scaling = (att_stat - def_stat) / 50  # varia da -1 a +1
+    scaling = (att_stat - def_stat) / 50
 
-    colpito_chance = 0.5 + scaling * 0.2  # da 0.3 a 0.7
-    bloccata_chance = 0.35 - scaling * 0.2  # da 0.15 a 0.55
+    colpito_chance = 0.5 + scaling * 0.2
+    bloccata_chance = 0.35 - scaling * 0.2
 
     colpito_chance = max(0.3, min(colpito_chance, 0.7))
     bloccata_chance = max(0.15, min(bloccata_chance, 0.55))
 
-    mancato_bonus = (100 - att_stat) / 100 * 0.1  # da 0 a 0.05
+    mancato_bonus = (110 - att_stat) / 100 * 0.2
     mancato_chance = max(0.05, 1.0 - (colpito_chance + bloccata_chance) + mancato_bonus)
 
     total = colpito_chance + bloccata_chance + mancato_chance
@@ -476,15 +585,28 @@ async def tiropa(interaction: discord.Interaction, utente: discord.Member):
     )
 
     risultato = random.choice(risultati)
+
+    if risultato == "Schivata/Bersaglio Mancato":
+        schivata_chance = max(0.3, min((def_stat - att_stat) / 50, 0.7))
+        mancato_chance = max(0.3, min(mancato_bonus, 0.7))
+        sub_result = random.choices(["Schivata", "Bersaglio Mancato"], weights=[schivata_chance, mancato_chance], k=1)[0]
+        result_message = f"{sub_result}"
+    else:
+        result_message = risultato
+
     await interaction.response.send_message(
-        f"🏐 {interaction.user.mention} ha lanciato la palla contro {utente.mention}: **{risultato}!**"
+        f"🏐 {interaction.user.mention} ha lanciato la palla contro {utente.mention}:\n"
+        f"# **{result_message}!**"
     )
 
 @tree.command(name="passaggio", description="Passa la palla a un compagno!")
 async def passaggio(interaction: discord.Interaction, utente: discord.Member):
     skills = get_user_skills(interaction.user.id)
     result = weighted_choice(skills["passaggio"], ['Palla passata'] * 4, ['Passaggio intercettato'])
-    await interaction.response.send_message(f"👟 {interaction.user.mention} prova a passare la palla a {utente.mention}: **{result}!**")
+    await interaction.response.send_message(
+        f"👟 {interaction.user.mention} prova a passare la palla a {utente.mention}:\n"
+        f"# **{result}!**"
+    )
 
 @tree.command(name="dribbling", description="Prova a dribblare un avversario!")
 async def dribbling(interaction: discord.Interaction, utente: discord.Member):
@@ -513,7 +635,10 @@ async def dribbling(interaction: discord.Interaction, utente: discord.Member):
     pesi = [superato_chance, nonsuperato_chance, subito_chance, commesso_chance]
     
     result = random.choices(eventi, weights=pesi, k=1)[0]
-    await interaction.response.send_message(f"⚡ {interaction.user.mention} tenta un dribbling contro {utente.mention}: **{result}!**")
+    await interaction.response.send_message(
+        f"⚡ {interaction.user.mention} tenta un dribbling contro {utente.mention}:\n"
+        f"# **{result}!**"
+    )
 
 @tree.command(name="contrasto", description="Prova a contrastare un avversario!")
 async def contrasto(interaction: discord.Interaction, utente: discord.Member):
@@ -542,25 +667,66 @@ async def contrasto(interaction: discord.Interaction, utente: discord.Member):
     pesi = [riuscito_chance, nonriuscito_chance, subito_chance, commesso_chance]
     
     result = random.choices(eventi, weights=pesi, k=1)[0]
-    await interaction.response.send_message(f"🛡️ {interaction.user.mention} prova a contrastare {utente.mention}: **{result}!**")
+    await interaction.response.send_message(
+            f"🛡️ {interaction.user.mention} prova a contrastare {utente.mention}:\n" 
+            f"# **{result}!**"
+        )
 
 @tree.command(name="tiro", description="Prova a tirare in porta!")
-async def tiro(interaction: discord.Interaction, utente: discord.Member):
+@app_commands.describe(
+    utente="Il portiere da sfidare",
+    tipo="Tipo di tiro (opzionale, default: Normale)"
+)
+@app_commands.choices(tipo=[
+    app_commands.Choice(name="Potenza", value="potenza"),
+    app_commands.Choice(name="Precisione", value="precisione"),
+    app_commands.Choice(name="Pallonetto", value="pallonetto")
+])
+async def tiro(interaction: discord.Interaction, utente: discord.Member, tipo: app_commands.Choice[str] = None):
+
+    tipo_tiro_value = tipo.value if tipo else "normale"
+    
     skills_att = get_user_skills(interaction.user.id)
     skills_por = get_user_skills(utente.id)
     
     stat_att = max(min(skills_att["tiro"], 100), 50)
     stat_por = max(min(skills_por["portiere"], 100), 50)
-    palo_chance = 0.05
+    base_palo_chance = 0.05
     
     scaling = (stat_att - stat_por) / 50
 
-    gol_chance = min(0.75, max(0.35, 0.55 + scaling * 0.2))
-    parata_chance = min(0.55, max(0.15, 0.35 - scaling * 0.2))
+    base_gol_chance = min(0.65, max(0.35, 0.45 + scaling * 0.2))
+    base_parata_chance = min(0.6, max(0.2, 0.35 - scaling * 0.25))
 
-    errore_bonus = (100 - stat_att) / 100 * 0.25
+    errore_bonus = (110 - stat_att) / 100 * 0.8
 
-    fuori_chance = min(0.3, max(0.05, errore_bonus))
+    base_fuori_chance = min(0.4, max(0.05, errore_bonus))
+    
+    # --- APPLICA MODIFICATORI PER TIPO DI TIRO ---
+    if tipo_tiro_value == "potenza":
+        gol_chance = min(0.75, max(0.35, 0.35 + scaling * 0.4))
+        parata_chance = min(0.3, max(0.1, 0.25 - scaling * 0.2))
+        fuori_chance = min(0.65, max(0.05,(110 - stat_att) / 100 * 1.2))
+        palo_chance = base_palo_chance * (1.0 - (stat_att - 50) * 0.005)
+
+    elif tipo_tiro_value == "precisione":
+        gol_chance = min(0.85, max(0.35, 0.5 + scaling * 0.7))
+        parata_chance = min(0.35, max(0.1, 0.25 - scaling * 0.7))
+        fuori_chance = min(0.5, max(0.05,(110 - stat_att) / 100 * 0.7))
+        palo_chance = base_palo_chance * (1.0 - (stat_att - 50) * 0.007)
+
+    elif tipo_tiro_value == "pallonetto":
+        gol_chance = min(0.7, max(0.2, 0.3 + scaling * 0.8))
+        parata_chance = min(0.6, max(0.3, 0.25 - scaling * 0.5))
+        fuori_chance = min(0.3, max(0.05, errore_bonus))
+        palo_chance = base_palo_chance * (1.0 - (stat_att - 50) * 0.009)
+        
+    else:
+        # Usa i valori base
+        gol_chance = base_gol_chance
+        parata_chance = base_parata_chance
+        fuori_chance = base_fuori_chance
+        palo_chance = base_palo_chance
 
     totale = gol_chance + parata_chance + fuori_chance + palo_chance
     if totale > 1:
@@ -574,10 +740,57 @@ async def tiro(interaction: discord.Interaction, utente: discord.Member):
     pesi = [gol_chance, parata_chance, fuori_chance, palo_chance]
 
     result = random.choices(eventi, weights=pesi, k=1)[0]
+        
+    # --- GESTIONE ESITI ---
+    if result == "Palo/Traversa":
+        # 66% Palo, 34% Traversa
+        sub_result = random.choices(["Palo", "Traversa"], weights=[0.66, 0.34], k=1)[0]
+        result_message = f"{sub_result}"
+    elif result == "Parata":
+        diff_skill = (stat_att - stat_por) / 50
+        
+        normalized_diff = max(-1.0, min(1.0, diff_skill))
 
-    await interaction.response.send_message(
-        f"⚽ {interaction.user.mention} ha tirato in porta: **{result}!** (Portiere: {utente.mention})"
-    )
+        bloccata_chance = 0.325 - normalized_diff * 0.125
+        corta_chance = 0.085 + normalized_diff * 0.065
+        fuori_chance = max(0.35, 1.0 - (bloccata_chance + corta_chance))
+
+        totale_parata = bloccata_chance + corta_chance + fuori_chance
+        if totale_parata > 1:
+            scale_parata = 1 / totale_parata
+            bloccata_chance *= scale_parata
+            corta_chance *= scale_parata
+            fuori_chance *= scale_parata
+            
+        # Scegli il sottotipo di parata
+        sub_result_parata = random.choices(
+            ["Bloccata", "Respinta Corta", "Palla Fuori"], 
+            weights=[bloccata_chance, corta_chance, fuori_chance], 
+            k=1
+        )[0]
+        
+        # --- GESTIONE PALLA FUORI (ANGOLO O RIMESSA) ---
+        if sub_result_parata == "Palla Fuori":
+            corn_or_throw_in = random.choices(["Calcio d'Angolo", "Rimessa Laterale"], weights=[0.5, 0.5], k=1)[0]
+            result_message = f"Parata: {corn_or_throw_in}"
+        else:
+            result_message = f"Parata: {sub_result_parata}"
+        
+    else:
+        result_message = result
+
+    if tipo:
+        await interaction.response.send_message(
+            f"⚽ {interaction.user.mention} ha tirato in porta (**{tipo.name}**):\n"
+            f"# {result_message}!\n" 
+            f"(Portiere: {utente.mention})"
+        )
+    else:    
+        await interaction.response.send_message(
+            f"⚽ {interaction.user.mention} ha tirato in porta:\n"
+            f"# {result_message}!\n"
+            f"(Portiere: {utente.mention})"
+        )
 
 @tree.command(name="fallo", description="Decidi se un fallo è da cartellino. Solo per Roleplay Staff.")
 async def fallo(interaction: discord.Interaction):
@@ -586,8 +799,34 @@ async def fallo(interaction: discord.Interaction):
     if interaction.user.id != owner_id and role is None and not is_admin:
         await interaction.response.send_message("❌ Non hai il permesso per usare questo comando!", ephemeral=True)
         return
-    fallo_responses = ['No Cartellino', 'Giallo', 'Rosso']
-    await interaction.response.send_message(f"🟥🟨 Fallo: {random.choice(fallo_responses)}")
+    fallo_responses = ['No Cartellino', 'Cartellino Giallo', 'Cartellino Rosso']
+    await interaction.response.send_message(f"🟥🟨 Fallo: **{random.choice(fallo_responses)}**")
+
+# --- COMANDO: /crossbar_challenge ---
+@tree.command(name="crossbar_challenge", description="Metti alla prova la tua precisione! Tira contro la traversa.")
+async def crossbar_challenge(interaction: discord.Interaction):
+    """Prova a colpire la traversa!"""
+    skills_att = get_user_skills(interaction.user.id)
+    
+    # Usa la skill "tiro" dell'utente
+    stat_att = max(min(skills_att["tiro"], 100), 50)
+    scaling = (stat_att - 50) / 50
+
+    traversa_chance = min(0.25, max(0.03, scaling * 0.25))
+    gol_chance = min(0.6, max(0.35, 0.4 + scaling * 0.2))
+    palo_chance = 0.05
+    fuori_chance = 1 - (traversa_chance + gol_chance + palo_chance)
+
+    risultati = ["Traversa", "Gol", "Palo", "Tiro Fuori"]
+    weights = [traversa_chance, gol_chance, palo_chance, fuori_chance]
+    
+    # Estrai il risultato
+    result = random.choices(risultati, weights=weights, k=1)[0]
+
+    await interaction.response.send_message(
+        f"🎯 **Crossbar Challenge per {interaction.user.mention}!**\n"
+        f"# **{result}!**"
+    )
 
 @tree.command(name="sorteggio", description="Estrai studenti in modo casuale per la tua materia.")
 @app_commands.describe(
@@ -1856,7 +2095,7 @@ async def vc_leave(interaction: discord.Interaction):
     save_vc(vc_data)
 
     # Notifica tutti i partecipanti rimasti nei loro thread casa (messaggio temporaneo)
-    notifica_msg = f"🚪 {interaction.user.mention} ha **lasciato** la chiamata."
+    notifica_msg = f"🚪 **{interaction.user.display_name}** ha **lasciato** la chiamata."
 
     for participant_id in active_vc["partecipanti"]:
         try:
@@ -2052,15 +2291,30 @@ async def on_message(message: discord.Message):
     if not user_id:
         user_id = str(message.author.id)
 
-    # 4. --- LOGICA VC ESISTENTE ---
+    # --- 4. LOGICA VC ESISTENTE (con supporto Vivavoce) ---
     vc_data = load_vc()
     active_vc = None
+    
+    # --- 4a. PRIMO: Controlla se l'utente è in una VC attiva (logica normale) ---
     for vc_id, data in vc_data.items():
         if data["stato"] == "attiva" and user_id in data["partecipanti"]:
             active_vc = data
+            # print(f"[DEBUG VC NORMALE] Utente {user_id} trovato in VC attiva {vc_id}")
             break
 
+    # --- 4b. SECONDO: Se non è in VC, controlla se il messaggio è da un canale in VIVAVOCE ---
+    if not active_vc:
+        # Cerca se il canale del messaggio è in vivavoce per qualche VC attiva
+        vc_info_from_vivavoce, listener_user_id = get_vc_info_and_listener_for_channel(message.channel.id)
+        if vc_info_from_vivavoce:
+            # print(f"[DEBUG VIVAVOCE] Canale {message.channel.id} è in vivavoce per VC, ascoltatore {listener_user_id}")
+            active_vc = vc_info_from_vivavoce
+            # ATTENZIONE: user_id rimane l'originale (quello che ha scritto)
+            # L'embed userà comunque message.author (l'originale) per nome/avatar
+            # Quindi il mittente nell'embed sarà corretto
+
     # 5. CONTROLLA SE L'UTENTE È SELF-MUTATO (persistente)
+    # Nota: per i messaggi da vivavoce, questo controllo si applica all'utente che ha attivato il vivavoce
     if active_vc and is_user_self_muted(active_vc, user_id):
         # L'utente è mutato, non inoltriamo il messaggio
         await bot.process_commands(message)
@@ -2077,6 +2331,7 @@ async def on_message(message: discord.Message):
         )
         
         # Usa il nome e l'avatar del webhook (tupper) o dell'utente normale
+        # NOTA: Per il vivavoce, l'utente originale è message.author, quindi l'embed lo mostra correttamente
         if isinstance(message.author, discord.User):
             # Messaggio da tupper/webhook
             embed_vc.set_author(
@@ -2084,7 +2339,7 @@ async def on_message(message: discord.Message):
                 icon_url=message.author.display_avatar.url # Avatar del tupper
             )
         else:
-            # Messaggio da utente normale
+            # Messaggio da utente normale (o da vivavoce)
             embed_vc.set_author(
                 name=message.author.display_name,
                 icon_url=message.author.display_avatar.url
@@ -2127,8 +2382,66 @@ async def on_message(message: discord.Message):
                             # print(f"[DEBUG] Thread {thread_id} è escluso, nessun invio.") # Opzionale
                 except Exception as e:
                     print(f"[ERRORE] Impossibile inviare messaggio al thread {thread_id}: {e}")
+
     # 9. Importante: processa i comandi anche per i messaggi normali
     await bot.process_commands(message)
+
+# --- COMANDO: /vc_vivavoce ---
+@tree.command(name="vc_vivavoce", description="Attiva/disattiva il vivavoce per un canale nella VC.")
+@app_commands.describe(canale="Il canale da mettere in vivavoce (default: il canale corrente)")
+async def vc_vivavoce(interaction: discord.Interaction, canale: discord.TextChannel = None):
+    """Attiva o disattiva il vivavoce per un canale."""
+    user_id = str(interaction.user.id)
+    
+    # Determina il canale target
+    target_channel = canale if canale else interaction.channel
+    target_channel_id = str(target_channel.id)
+    
+    # Verifica che l'utente sia in una VC attiva
+    vc_data = load_vc()
+    active_vc = None
+    target_vc_id = None
+    for vc_id, data in vc_data.items():
+        if data["stato"] == "attiva" and user_id in data["partecipanti"]:
+            active_vc = data
+            target_vc_id = vc_id
+            break
+    
+    if not active_vc:
+        await interaction.response.send_message(
+            "❌ Non sei in nessuna chiamata attiva dove attivare il vivavoce.",
+            ephemeral=True
+        )
+        return
+
+    # Controlla se il canale è già in vivavoce per questa VC
+    vivavoce_channels = active_vc.get("vivavoce_channels", {})
+    
+    if target_channel_id in vivavoce_channels:
+        # Disattiva il vivavoce
+        if remove_vivavoce_channel_from_vc_data(target_vc_id, target_channel_id):
+            await interaction.response.send_message(
+                f"🔇 Vivavoce disattivato per il canale {target_channel.mention} nella chiamata.",
+                ephemeral=True
+            )
+        else:
+             await interaction.response.send_message(
+                "❌ Errore durante la disattivazione del vivavoce.",
+                ephemeral=True
+            )
+    else:
+        # Attiva il vivavoce
+        if set_vivavoce_channel_in_vc_data(target_vc_id, target_channel_id, user_id):
+            await interaction.response.send_message(
+                f"🎙️ Vivavoce attivato! Ora i messaggi da {target_channel.mention} verranno inoltrati nella chiamata. Chiunque scriva lì sarà sentito come se fosse tu.",
+                ephemeral=True
+            )
+        else:
+             await interaction.response.send_message(
+                "❌ Errore durante l'attivazione del vivavoce.",
+                ephemeral=True
+            )
+
 
 @bot.event
 async def on_ready():
