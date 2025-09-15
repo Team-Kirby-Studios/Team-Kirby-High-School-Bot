@@ -645,7 +645,7 @@ async def contrasto(interaction: discord.Interaction, utente: discord.Member):
     skill_def = get_user_skills(interaction.user.id)
     skill_att = get_user_skills(utente.id)
     
-    stats_att = max(min(skill_att["dribbling"], 100), 50)
+    stats_att = (max(min(skill_att["dribbling"], 100), 50) + max(min(skill_att["contrasto"], 100), 50)) / 2.2
     stats_def = max(min(skill_def["contrasto"], 100), 50)
     
     scaling = (stats_def - stats_att) / 50
